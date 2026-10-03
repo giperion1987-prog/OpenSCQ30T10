@@ -86,7 +86,7 @@ jobs:
         run: |
           rustc --version
           cargo --version
-          cargo-ndk --version
+          cargo ndk --version
           java -version
           sdkmanager --list_installed | grep -E "platforms;android-37\.0|build-tools;37\.|ndk;29.0.14206865" || true
 
