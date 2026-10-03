@@ -17,7 +17,7 @@ jobs:
     env:
       JAVA_VERSION: '21'
       ANDROID_NDK_VERSION: '29.0.14206865'
-      ANDROID_PLATFORM: 'android-37'
+      ANDROID_PLATFORM: 'android-37.0'
       ANDROID_BUILD_TOOLS: '37.0.0'
       RUST_TOOLCHAIN: '1.97.1'
       CARGO_NDK_VERSION: '4.1.2'
@@ -54,34 +54,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          sdkmanager "platforms;${ANDROID_PLATFORM}" "ndk;${ANDROID_NDK_VERSION}"
+          # Android 37 is currently published as the minor API package android-37.0.
+          # OpenSCQ30 v2.12.0 uses compileSdk = 37, which AGP 9.3 resolves to 37.0.
+          echo "Installing Android SDK packages..."
+          sdkmanager --install \
+            "platforms;${ANDROID_PLATFORM}" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" \
+            "ndk;${ANDROID_NDK_VERSION}"
 
-          # Google has changed Build Tools availability during 2026.
-          # Prefer the exact version used by OpenSCQ30 v2.12.0; if it is not
-          # offered, select the newest stable 37.x version and patch the
-          # build file to use that installed version.
-          if sdkmanager --list | grep -Eq '^\s*build-tools;37\.0\.0\s'; then
-            sdkmanager "build-tools;37.0.0"
-          else
-            BUILD_TOOLS_VERSION="$(
-              sdkmanager --list \
-                | sed -n 's/^\s*build-tools;\(37\.[0-9.]*\)\s*|.*/\1/p' \
-                | grep -E '^37\.[0-9]+\.[0-9]+$' \
-                | sort -V \
-                | tail -n 1
-            )"
+          echo "Installed SDK packages:"
+          sdkmanager --list_installed | grep -E "platforms;android-37\.0|build-tools;37\.0\.0|ndk;29\.0\.14206865" || true
 
-            if [ -z "$BUILD_TOOLS_VERSION" ]; then
-              echo 'ERROR: No stable Android 37.x.x Build Tools package is available.'
-              exit 1
-            fi
-
-            echo "Exact build-tools 37.0.0 is unavailable; using $BUILD_TOOLS_VERSION"
-            sdkmanager "build-tools;${BUILD_TOOLS_VERSION}"
-
-            sed -i "s/buildToolsVersion = \"37.0.0\"/buildToolsVersion = \"${BUILD_TOOLS_VERSION}\"/" android/app/build.gradle.kts
-            echo "Patched android/app/build.gradle.kts to buildToolsVersion ${BUILD_TOOLS_VERSION}"
-          fi
+          test -d "${ANDROID_SDK_ROOT}/platforms/android-37.0"
+          test -d "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}"
+          test -d "${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
 
       - name: Set Android NDK environment
         shell: bash
@@ -102,7 +88,7 @@ jobs:
           cargo --version
           cargo-ndk --version
           java -version
-          sdkmanager --list_installed | grep -E "platforms;android-37|build-tools;37\.|ndk;29.0.14206865" || true
+          sdkmanager --list_installed | grep -E "platforms;android-37\.0|build-tools;37\.|ndk;29.0.14206865" || true
 
       - name: Extend Q45 Transparency range to 1-10
         shell: python
