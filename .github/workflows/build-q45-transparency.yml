@@ -145,7 +145,7 @@ jobs:
         run: |
           keytool -genkeypair \
             -v \
-            -keystore android/q45t10-release.keystore \
+            -keystore android/app/q45t10-release.keystore \
             -storepass q45t10demo \
             -keypass q45t10demo \
             -alias q45t10 \
@@ -153,6 +153,8 @@ jobs:
             -keysize 2048 \
             -validity 10000 \
             -dname "CN=OpenSCQ30 Q45 T10, OU=Open Source, O=Local Build, L=Unknown, ST=Unknown, C=XX"
+
+          test -f android/app/q45t10-release.keystore
 
           cat > android/keystore.properties <<'PROPS'
           storeFile=q45t10-release.keystore
