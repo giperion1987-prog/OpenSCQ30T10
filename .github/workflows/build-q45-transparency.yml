@@ -1,0 +1,174 @@
+name: Build OpenSCQ30 for Q45 (Transparency 1-10)
+
+on:
+  push:
+    paths:
+      - '.github/workflows/build-q45-transparency.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arm64:
+    name: Build ARM64 APK
+    runs-on: ubuntu-24.04
+
+    env:
+      JAVA_VERSION: '21'
+      ANDROID_NDK_VERSION: '29.0.14206865'
+      ANDROID_PLATFORM: 'android-37'
+      ANDROID_BUILD_TOOLS: '37.0.0'
+      RUST_TOOLCHAIN: '1.97.1'
+      CARGO_NDK_VERSION: '4.1.2'
+
+    steps:
+      - name: Checkout OpenSCQ30 v2.12.0
+        uses: actions/checkout@v4
+        with:
+          repository: Oppzippy/OpenSCQ30
+          ref: v2.12.0
+          fetch-depth: 1
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-linux-android
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;${ANDROID_PLATFORM}" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Set Android NDK environment
+        shell: bash
+        run: |
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: |
+          cargo install cargo-ndk --version "${CARGO_NDK_VERSION}" --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          cargo-ndk --version
+          java -version
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --list_installed | grep -E "platforms;android-37|build-tools;37.0.0|ndk;29.0.14206865" || true
+
+      - name: Extend Q45 Transparency range to 1-10
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path("lib/src/devices/soundcore/a3040/modules/sound_modes/setting_handler.rs")
+          text = path.read_text(encoding="utf-8")
+
+          pattern = re.compile(
+              r"(SoundModeSetting::ManualTransparency\s*=>\s*Setting::I32Range\s*\{\s*"
+              r"setting:\s*settings::Range\s*\{\s*"
+              r"range:\s*)1\.\.=5(,\s*step:\s*1,)",
+              re.S,
+          )
+
+          new_text, count = pattern.subn(r"\g<1>1..=10\g<2>", text, count=1)
+          if count != 1:
+              raise SystemExit(
+                  "Could not patch ManualTransparency: expected exactly one `range: 1..=5` "
+                  "inside SoundModeSetting::ManualTransparency."
+              )
+
+          path.write_text(new_text, encoding="utf-8")
+          print("Patched ManualTransparency range: 1..=5 -> 1..=10")
+
+      - name: Make APK coexist with official OpenSCQ30
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("android/app/build.gradle.kts")
+          text = path.read_text(encoding="utf-8")
+
+          old_id = 'applicationId = "com.oppzippy.openscq30"'
+          new_id = 'applicationId = "com.oppzippy.openscq30.q45t10"'
+          if old_id not in text:
+              raise SystemExit("Could not find OpenSCQ30 applicationId in android/app/build.gradle.kts")
+          text = text.replace(old_id, new_id, 1)
+
+          old_name = 'versionName = "2.12.0"'
+          new_name = 'versionName = "2.12.0-q45-t10"'
+          if old_name not in text:
+              raise SystemExit("Could not find versionName 2.12.0 in android/app/build.gradle.kts")
+          text = text.replace(old_name, new_name, 1)
+
+          text = text.replace('versionCode = 1028', 'versionCode = 1029', 1)
+          path.write_text(text, encoding="utf-8")
+          print("Changed applicationId to com.oppzippy.openscq30.q45t10")
+
+      - name: Create temporary signing key
+        shell: bash
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore android/q45t10-release.keystore \
+            -storepass q45t10demo \
+            -keypass q45t10demo \
+            -alias q45t10 \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=OpenSCQ30 Q45 T10, OU=Open Source, O=Local Build, L=Unknown, ST=Unknown, C=XX"
+
+          cat > android/keystore.properties <<'PROPS'
+          storeFile=q45t10-release.keystore
+          storePassword=q45t10demo
+          keyAlias=q45t10
+          keyPassword=q45t10demo
+          PROPS
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build ARM64 release APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleArm64-v8aRelease
+
+      - name: Rename APK
+        shell: bash
+        run: |
+          src="android/app/build/outputs/apk/arm64-v8a/release/app-arm64-v8a-release.apk"
+          test -f "$src"
+          mkdir -p build-output
+          cp "$src" "build-output/OpenSCQ30-Q45-Transparency-1-10-arm64-v8a.apk"
+          sha256sum "build-output/OpenSCQ30-Q45-Transparency-1-10-arm64-v8a.apk" | tee "build-output/SHA256SUMS.txt"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenSCQ30-Q45-Transparency-1-10-arm64-v8a
+          path: |
+            build-output/OpenSCQ30-Q45-Transparency-1-10-arm64-v8a.apk
+            build-output/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
